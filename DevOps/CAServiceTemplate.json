@@ -1,0 +1,165 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "CloudFormation Script for the SES CAService. Contains two EC2 instances, an ElastiCache instance, a load balancer, and it should exist in two Availability Zones",
+
+  "Parameters" : {
+    "EC2InstanceType" : {
+      "Description" : "Type of EC2 instance to launch",
+      "Type" : "String",
+      "Default" : "c3.large",
+      "AllowedValues":[
+        "c3.large",
+        "c3.xlarge",
+        "c3.2xlarge",
+        "c3.4xlarge",
+        "c3.8xlarge"
+      ]
+    },
+    "CacheType" : {
+      "Description" : "Type of ElastiCache instance to add to cache cluster",
+      "Type" : "String",
+      "Default" : "cache.m3.medium",
+      "AllowedValues":[
+        "cache.m3.medium",
+        "cache.m3.large",
+        "cache.m3.xlarge",
+        "cache.m3.2xlarge",
+        "cache.r3.large",
+        "cache.r3.xlarge",
+        "cache.r3.2xlarge",
+        "cache.r3.4xlarge",
+        "cache.r3.8xlarge",
+        "cache.t2.micro",
+        "cache.t2.small",
+        "cache.t2.medium"
+      ]
+    },
+    "WebServerPort" : {
+      "Description" : "TCP/IP port of the web server",
+      "Type" : "String",
+      "Default" : "80"
+    },
+    "RDPPort" : {
+      "Description" : "TCP and UDP port for connecting through RDP",
+      "Type" : "String",
+      "Default" : "3389"
+    },
+    "EC2InstanceAMI" : {
+      "Description" : "The AMI id of the instance to use for our CA Service EC2 Instances",
+      "Type" : "String",
+      "Default" : "ami-6aff5e02"
+    },
+    "KeyName" : {
+      "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type" : "String"
+    }
+  },
+
+  "Mappings" : {
+  },
+
+  "Resources" : {
+
+    "ElasticLoadBalancer" : {
+      "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties" : {
+        "AvailabilityZones" : { "Fn::GetAZs" : "" },
+        "Instances" : [ { "Ref" : "Ec2Instance1" },{ "Ref" : "Ec2Instance2" } ],
+        "Listeners" : [ {
+          "LoadBalancerPort" : "80",
+          "InstancePort" : { "Ref" : "WebServerPort" },
+          "Protocol" : "HTTP"
+        } ],
+        "HealthCheck" : {
+          "Target" : { "Fn::Join" : [ "", ["HTTP:", { "Ref" : "WebServerPort" }, "/"]]},
+          "HealthyThreshold" : "3",
+          "UnhealthyThreshold" : "5",
+          "Interval" : "30",
+          "Timeout" : "5"
+        }
+      }
+    },
+
+    "Ec2Instance1" : {
+      "Type" : "AWS::EC2::Instance",
+      "Properties" : {
+        "SecurityGroups" : [ { "Ref" : "InstanceSecurityGroup" } ],
+        "KeyName" : { "Ref" : "KeyName" },
+        "InstanceType" : { "Ref" : "EC2InstanceType" },
+        "ImageId" : { "Ref" : "EC2InstanceAMI" },
+        "UserData" : { "Fn::Base64" : { "Ref" : "WebServerPort" }}
+      }
+    },
+    "Ec2Instance2" : {
+      "Type" : "AWS::EC2::Instance",
+      "Properties" : {
+        "SecurityGroups" : [ { "Ref" : "InstanceSecurityGroup" } ],
+        "KeyName" : { "Ref" : "KeyName" },
+        "InstanceType" : { "Ref" : "EC2InstanceType" },
+        "ImageId" : { "Ref" : "EC2InstanceAMI" },
+        "UserData" : { "Fn::Base64" : { "Ref" : "WebServerPort" }}
+      }
+    },
+    "InstanceSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable SSH, HTTP, and RDP access on the inbound port",
+        "SecurityGroupIngress" : [ {
+          "IpProtocol" : "tcp",
+          "FromPort" : "22",
+          "ToPort" : "22",
+          "CidrIp" : "0.0.0.0/0"
+        },
+        {
+          "IpProtocol" : "tcp",
+          "FromPort" : { "Ref" : "WebServerPort" },
+          "ToPort" : { "Ref" : "WebServerPort" },
+          "CidrIp" : "0.0.0.0/0"
+        },
+        {
+          "IpProtocol" : "tcp",
+          "FromPort" : { "Ref" : "RDPPort" },
+          "ToPort" : { "Ref" : "RDPPort" },
+          "CidrIp" : "0.0.0.0/0"
+        },
+        {
+          "IpProtocol" : "udp",
+          "FromPort" : { "Ref" : "RDPPort" },
+          "ToPort" : { "Ref" : "RDPPort" },
+          "CidrIp" : "0.0.0.0/0"
+        } ]
+      }
+    },
+
+    "ElastiCacheCluster" : {
+      "Type": "AWS::ElastiCache::CacheCluster",
+      "Properties": {
+        "AutoMinorVersionUpgrade": "true",
+        "Engine": "memcached",
+        "CacheNodeType": { "Ref" : "CacheType" },
+        "NumCacheNodes": "1",
+        "VpcSecurityGroupIds": [{"Fn::GetAtt": [ "ElasticacheSecurityGroup", "GroupId"]}]
+      }
+    },
+    "ElasticacheSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Elasticache Security Group",
+        "SecurityGroupIngress": [ { 
+          "IpProtocol": "tcp", 
+          "FromPort": "11211", 
+          "ToPort": "11211",
+          "SourceSecurityGroupName": {"Ref": "InstanceSecurityGroup"}
+        } ]
+      }
+    }
+
+  },
+  "Outputs" : {
+    "URL" : {
+      "Description" : "URL of the CA Service",
+      "Value" :  { "Fn::Join" : [ "", [ "http://", { "Fn::GetAtt" : [ "ElasticLoadBalancer", "DNSName" ]}]]}
+    }
+  }
+}
